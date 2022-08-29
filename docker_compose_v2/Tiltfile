@@ -1,0 +1,68 @@
+def _probe_for(container):
+    """Simulate a healthcheck using:
+     - container's running status
+     - container's health if it exists
+     Needs jq installed locally
+    :type container: str
+    :rtype: Probe
+    """
+    return probe(
+        period_secs=5,
+        success_threshold=1,
+        failure_threshold=1,
+        timeout_secs=2,
+        exec=exec_action(command=[
+            "sh", "-c",
+            "docker inspect --format='{{json .}}' %s " % container +
+            "| jq -r '((.State.Running | tostring) + \" \" + (.State.Health.Status // \"healthy\"))' " +
+            "| grep 'true healthy'"
+        ])
+    )
+
+# Note: https://github.com/docker/compose/issues/8785 docker compose build and up is failing when using an image we build from a dockerfile instead of an image from docker hub
+# TODO: Parameter which emulates dc_resource
+# TODO: Allow a resource name prefix to namespace the resources?
+def docker_compose_v2(config_file_path, build=True, only=[], project_name='', dependencies=[], labels=[]):
+	"""An alternate to docker_compose() which supports docker compose invoked independently with different working directories. This contrasts with docker_compose() which requires the same working directory for all invocations.
+
+	:param config_file_path: Path of the docker-compose.yaml file
+	:param build: Whether to run docker compose build for each service
+	:param only: List of services to run
+	:param project_name: Name of the project for docker compose
+	:param dependencies: Tilt resource dependencies which this resource relies on
+	:param labels: Tilt resource labels
+	:type config_file_path: str
+	:type build: bool
+	:type only: List[str]
+	:type project_name: str
+	:type dependencies: List[str]
+	:type labels: List[str]
+	"""
+	services = decode_yaml(read_file(config_file_path))['services']
+
+	if len(only) == 0:
+		only = services.keys()
+
+	for service_name, spec in services.items():
+		if service_name not in only:
+			continue
+
+		print('Loading service %s from docker compose file' % service_name)
+
+		resource_deps = spec.get('depends_on', [])
+		qualified_service_name = '%s-%s-1' % (project_name, service_name) if project_name else service_name
+		local_resource(
+			service_name,
+			# cmd='docker compose -p %s -f %s build %s' % (project_name, config_file_path, service_name),
+			# TODO: Uncomment above and readd --no-build below when docker compose build is fixed
+			serve_cmd='docker compose -p %s -f %s up --no-deps %s' % (
+				project_name,
+				config_file_path,
+				service_name
+			),
+			resource_deps=resource_deps,
+			deps=[os.path.dirname(config_file_path)],
+			readiness_probe=_probe_for(qualified_service_name),
+			allow_parallel=True,
+			labels=labels
+		)
