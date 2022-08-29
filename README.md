@@ -1,4 +1,4 @@
-# Torch Tilt Extensions
+# Tilt Extensions
 
 Collection of [extensions](ttps://docs.tilt.dev/extensions.html) to be used in [Tilt](https://tilt.dev/).
 
